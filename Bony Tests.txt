@@ -1,0 +1,142 @@
+
+
+Public Sub CheckForExistingIndexes()
+    Dim db As DAO.Database
+    Set db = CurrentDb
+    
+    Dim tbl As DAO.TableDef
+    Set tbl = db.TableDefs("BonyStatement")
+    
+    Debug.Print "═══ INDEXES ON BonyStatement ═══"
+    Debug.Print ""
+    
+    Dim idx As DAO.Index
+    For Each idx In tbl.Indexes
+        Debug.Print "Index Name: " & idx.Name
+        Debug.Print "  Primary: " & idx.Primary
+        Debug.Print "  Unique: " & idx.Unique
+        Debug.Print "  Fields: "
+        
+        Dim fld As DAO.Field
+        For Each fld In idx.Fields
+            Debug.Print "    - " & fld.Name
+        Next
+        Debug.Print ""
+    Next
+    
+    Set tbl = Nothing
+    Set db = Nothing
+End Sub
+
+
+Public Sub VerifyActualRowCount()
+    Dim rs As ADODB.Recordset
+    Set rs = CurrentProject.Connection.Execute("SELECT COUNT(*) AS Total FROM BonyStatement")
+    
+    Debug.Print "Total rows in BonyStatement: " & Format(rs("Total"), "#,##0")
+    
+    ' Also check how many with today's date
+    Set rs = CurrentProject.Connection.Execute( _
+        "SELECT COUNT(*) AS Total FROM BonyStatement WHERE ValueDate = #13-Jan-2025#")
+    
+    Debug.Print "Rows with ValueDate = 13-Jan-2025: " & Format(rs("Total"), "#,##0")
+    
+    rs.Close
+End Sub
+
+
+ Public Sub GetDetailedTableInfo()
+    Dim db As DAO.Database
+    Set db = CurrentDb
+    
+    Dim tbl As DAO.TableDef
+    Set tbl = db.TableDefs("BonyStatement")
+    
+    Debug.Print "═══ BonyStatement TABLE INFO ═══"
+    Debug.Print "Record Count: " & Format(tbl.RecordCount, "#,##0")
+    Debug.Print ""
+    
+    Debug.Print "Fields:"
+    Dim fld As DAO.Field
+    For Each fld In tbl.Fields
+        Debug.Print "  " & fld.Name & " (" & GetFieldTypeName(fld.Type) & ")"
+        If fld.Name = "ValueDate" Then
+            Debug.Print "    → Indexed: " & fld.Attributes And dbIndexed
+        End If
+    Next
+    
+    Debug.Print ""
+    Debug.Print "Indexes:"
+    Dim idx As DAO.Index
+    For Each idx In tbl.Indexes
+        Debug.Print "  " & idx.Name & ":"
+        For Each fld In idx.Fields
+            Debug.Print "    - " & fld.Name
+        Next
+    Next
+End Sub
+
+Private Function GetFieldTypeName(fieldType As DAO.DataTypeEnum) As String
+    Select Case fieldType
+        Case dbLong: GetFieldTypeName = "Long Integer"
+        Case dbText: GetFieldTypeName = "Text"
+        Case dbMemo: GetFieldTypeName = "Memo"
+        Case dbDate: GetFieldTypeName = "Date/Time"
+        Case dbDouble: GetFieldTypeName = "Double"
+        Case dbCurrency: GetFieldTypeName = "Currency"
+        Case Else: GetFieldTypeName = "Other (" & fieldType & ")"
+    End Select
+End Function
+
+Public Sub CompareIndexedVsNonIndexed()
+    Debug.Print "═══ PERFORMANCE COMPARISON ═══"
+    Debug.Print ""
+    
+    ' Test 1: Query that CAN use index (if exists)
+    Debug.Print "Test 1: WHERE ValueDate = #13-Jan-2025#"
+    Dim startTime As Double
+    startTime = Timer
+    
+    Dim rs As ADODB.Recordset
+    Set rs = CurrentProject.Connection.Execute( _
+        "SELECT * FROM BonyStatement WHERE ValueDate = #13-Jan-2025#")
+    
+    Dim indexedTime As Double
+    indexedTime = Timer - startTime
+    
+    Debug.Print "  Rows: " & rs.RecordCount
+    Debug.Print "  Time: " & Format(indexedTime, "0.000") & " seconds"
+    rs.Close
+    
+    ' Test 2: Query that CANNOT use index (function prevents it)
+    Debug.Print ""
+    Debug.Print "Test 2: WHERE DateValue(ValueDate) = #13-Jan-2025#"
+    Debug.Print "  (Wrapping in function prevents index use)"
+    
+    startTime = Timer
+    Set rs = CurrentProject.Connection.Execute( _
+        "SELECT * FROM BonyStatement WHERE DateValue(ValueDate) = #13-Jan-2025#")
+    
+    Dim nonIndexedTime As Double
+    nonIndexedTime = Timer - startTime
+    
+    Debug.Print "  Rows: " & rs.RecordCount
+    Debug.Print "  Time: " & Format(nonIndexedTime, "0.000") & " seconds"
+    rs.Close
+    
+    ' Compare
+    Debug.Print ""
+    Debug.Print "═══ RESULTS ═══"
+    Debug.Print "Indexed query: " & Format(indexedTime, "0.000") & " sec"
+    Debug.Print "Non-indexed query: " & Format(nonIndexedTime, "0.000") & " sec"
+    
+    If nonIndexedTime > indexedTime * 5 Then
+        Debug.Print ""
+        Debug.Print "✓ CONFIRMED: You have a working index on ValueDate!"
+        Debug.Print "  (Non-indexed is " & Format(nonIndexedTime / indexedTime, "0") & "x slower)"
+    Else
+        Debug.Print ""
+        Debug.Print "⚠️ Both queries similar speed - might not have an index"
+        Debug.Print "  OR: Data is small enough that it doesn't matter"
+    End If
+End Sub
