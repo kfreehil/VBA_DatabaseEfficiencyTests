@@ -140,3 +140,283 @@ Public Sub CompareIndexedVsNonIndexed()
         Debug.Print "  OR: Data is small enough that it doesn't matter"
     End If
 End Sub
+
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+CRITICAL DIAGNOSTICS TAKE 2
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+'Test 1: Verify Actual Row Count
+
+Public Sub GetTrueRowCount()
+    Debug.Print "═══ ACCURATE ROW COUNT TEST ═══"
+    Debug.Print ""
+    
+    ' tbl.RecordCount can be unreliable - get real count
+    Dim startTime As Double
+    startTime = Timer
+    
+    Dim rs As ADODB.Recordset
+    Set rs = CurrentProject.Connection.Execute("SELECT COUNT(*) AS Total FROM BonyStatement")
+    
+    Dim countTime As Double
+    countTime = Timer - startTime
+    
+    Debug.Print "Actual row count: " & Format(rs("Total"), "#,##0")
+    Debug.Print "Count time: " & Format(countTime, "0.00") & " seconds"
+    Debug.Print ""
+    
+    If rs("Total") < 100000 Then
+        Debug.Print "⚠️ WARNING: Row count is much lower than 1.5M!"
+        Debug.Print "This explains the fast query performance."
+    ElseIf rs("Total") > 1000000 Then
+        Debug.Print "✓ Confirmed: Over 1 million rows"
+        Debug.Print "Fast query with no index is VERY unusual!"
+    End If
+    
+    rs.Close
+End Sub
+
+'Test 2: Check if Table is Linked
+
+Public Sub CheckIfLinkedTable()
+    Dim db As DAO.Database
+    Set db = CurrentDb
+    
+    Dim tbl As DAO.TableDef
+    Set tbl = db.TableDefs("BonyStatement")
+    
+    Debug.Print "═══ TABLE TYPE CHECK ═══"
+    Debug.Print "Table name: " & tbl.Name
+    Debug.Print "Connect string: " & tbl.Connect
+    Debug.Print ""
+    
+    If tbl.Connect <> "" Then
+        Debug.Print "⚠️ THIS IS A LINKED TABLE!"
+        Debug.Print "Source: " & tbl.Connect
+        Debug.Print ""
+        Debug.Print "The indexes might exist on the source database,"
+        Debug.Print "but they don't show in Access's TableDef.Indexes"
+        Debug.Print ""
+        Debug.Print "That's why your query is fast!"
+    Else
+        Debug.Print "✓ This is a LOCAL table"
+        Debug.Print "No indexes should mean slow queries..."
+    End If
+End Sub
+
+'Test 3: Force a Full Table Scan (Prove No Index)
+
+Public Sub ProveNoIndexWithMultipleDates()
+    Debug.Print "═══ MULTIPLE DATE TEST (No Cache) ═══"
+    Debug.Print ""
+    Debug.Print "Testing different dates to rule out caching..."
+    Debug.Print ""
+    
+    ' Test 5 different random dates
+    Dim testDates As Variant
+    testDates = Array( _
+        "05-Jan-2025", _
+        "10-Jan-2025", _
+        "15-Jan-2025", _
+        "20-Jan-2025", _
+        "25-Jan-2025" _
+    )
+    
+    Dim totalTime As Double
+    totalTime = 0
+    
+    Dim testDate As Variant
+    For Each testDate In testDates
+        Dim startTime As Double
+        startTime = Timer
+        
+        Dim rs As ADODB.Recordset
+        Set rs = CurrentProject.Connection.Execute( _
+            "SELECT COUNT(*) FROM BonyStatement WHERE ValueDate = #" & testDate & "#")
+        
+        Dim queryTime As Double
+        queryTime = Timer - startTime
+        totalTime = totalTime + queryTime
+        
+        Debug.Print "Date: " & testDate & " | Rows: " & Format(rs(0).Value, "#,##0") & _
+                   " | Time: " & Format(queryTime, "0.000") & " sec"
+        
+        rs.Close
+    Next
+    
+    Dim avgTime As Double
+    avgTime = totalTime / 5
+    
+    Debug.Print ""
+    Debug.Print "Average query time: " & Format(avgTime, "0.000") & " seconds"
+    Debug.Print ""
+    
+    If avgTime < 1 Then
+        Debug.Print "⚠️ MYSTERY: All queries fast with no index!"
+        Debug.Print "Possible explanations:"
+        Debug.Print "  1. Table is linked (has indexes on source DB)"
+        Debug.Print "  2. Actual row count is much lower"
+        Debug.Print "  3. Access doing something unexpected"
+    Else
+        Debug.Print "✓ EXPECTED: Queries slow without index"
+        Debug.Print "Your first query was probably cached"
+    End If
+End Sub
+
+''Test 4: Database File Location
+
+
+Public Sub CheckDatabaseLocation()
+    Debug.Print "═══ DATABASE FILE INFO ═══"
+    Debug.Print "Database path: " & CurrentDb.Name
+    Debug.Print "Database size: " & Format(FileLen(CurrentDb.Name) / 1024 / 1024, "#,##0") & " MB"
+    Debug.Print ""
+    
+    ' Estimate expected size
+    Dim rs As ADODB.Recordset
+    Set rs = CurrentProject.Connection.Execute("SELECT COUNT(*) FROM BonyStatement")
+    Dim rowCount As Long
+    rowCount = rs(0).Value
+    rs.Close
+    
+    ' Very rough estimate: ~200 bytes per row on average
+    Dim expectedSizeMB As Long
+    expectedSizeMB = (rowCount * 200) / 1024 / 1024
+    
+    Debug.Print "Rows: " & Format(rowCount, "#,##0")
+    Debug.Print "Expected DB size: ~" & Format(expectedSizeMB, "#,##0") & " MB (very rough)"
+    Debug.Print ""
+    
+    If expectedSizeMB > 1000 And FileLen(CurrentDb.Name) / 1024 / 1024 < 500 Then
+        Debug.Print "⚠️ DB size much smaller than expected!"
+        Debug.Print "Rows might not all be in this database"
+    End If
+End Sub
+
+''Test 5: Definitive Full Table Scan
+
+Public Sub ForceFullTableScan()
+    Debug.Print "═══ FORCE FULL TABLE SCAN ═══"
+    Debug.Print ""
+    Debug.Print "This query CANNOT use an index (if one exists)..."
+    Debug.Print "If this is slow, there's no index. If fast, something else is going on."
+    Debug.Print ""
+    
+    Dim startTime As Double
+    startTime = Timer
+    
+    ' Use a function on ValueDate - this prevents index usage
+    Dim rs As ADODB.Recordset
+    Set rs = CurrentProject.Connection.Execute( _
+        "SELECT COUNT(*) FROM BonyStatement " & _
+        "WHERE DateValue(ValueDate) = #13-Jan-2025#")
+    
+    Dim scanTime As Double
+    scanTime = Timer - startTime
+    
+    Debug.Print "Rows found: " & Format(rs(0).Value, "#,##0")
+    Debug.Print "Time: " & Format(scanTime, "0.00") & " seconds"
+    Debug.Print ""
+    
+    rs.Close
+    
+    ' Now compare to simple query
+    startTime = Timer
+    Set rs = CurrentProject.Connection.Execute( _
+        "SELECT COUNT(*) FROM BonyStatement " & _
+        "WHERE ValueDate = #13-Jan-2025#")
+    
+    Dim simpleTime As Double
+    simpleTime = Timer - startTime
+    
+    Debug.Print "Simple query time: " & Format(simpleTime, "0.00") & " seconds"
+    Debug.Print ""
+    
+    If scanTime > 10 And simpleTime < 2 Then
+        Debug.Print "✓ CONFIRMED: There IS an index working!"
+        Debug.Print "  (Even though it doesn't show in Indexes collection)"
+        Debug.Print "  Most likely: Linked table with index on source DB"
+    ElseIf scanTime > 10 And simpleTime > 10 Then
+        Debug.Print "✓ CONFIRMED: No index - both queries slow"
+        Debug.Print "  Your earlier fast result was probably cached"
+    Else
+        Debug.Print "⚠️ Both queries fast (< 2 sec) on 1.5M rows with no index"
+        Debug.Print "  This is IMPOSSIBLE - something unusual is happening"
+    End If
+End Sub
+
+''TEST SLEEVE
+
+Public Sub RunFullDiagnostics()
+    Debug.Print "════════════════════════════════════════════"
+    Debug.Print "FULL DIAGNOSTIC SUITE"
+    Debug.Print "════════════════════════════════════════════"
+    Debug.Print ""
+    
+    Call GetTrueRowCount()
+    Debug.Print ""
+    Debug.Print "----------------------------------------"
+    Debug.Print ""
+    
+    Call CheckIfLinkedTable()
+    Debug.Print ""
+    Debug.Print "----------------------------------------"
+    Debug.Print ""
+    
+    Call CheckDatabaseLocation()
+    Debug.Print ""
+    Debug.Print "----------------------------------------"
+    Debug.Print ""
+    
+    Call ProveNoIndexWithMultipleDates()
+    Debug.Print ""
+    Debug.Print "----------------------------------------"
+    Debug.Print ""
+    
+    Call ForceFullTableScan()
+    Debug.Print ""
+    Debug.Print "════════════════════════════════════════════"
+End Sub
+```
+
+---
+
+## 🤔 **What I Suspect**
+
+Based on "no indexes" + "fast query", one of these MUST be true:
+
+### **Hypothesis 1: Linked Table** (Most Likely)
+```
+Your BonyStatement is a linked table pointing to:
+├─ SQL Server database (with indexes)
+├─ Another Access database (with indexes)
+└─ ODBC source (with indexes)
+
+Access can't see remote indexes in TableDef.Indexes
+But the remote database uses them for queries
+Result: Fast queries, no visible indexes
+```
+
+### **Hypothesis 2: Much Fewer Rows**
+```
+You don't actually have 1.5M rows in THIS table:
+├─ Maybe 1.5M is across ALL years/tables
+├─ This specific table: 50K rows
+└─ Result: Fast even without index
+```
+
+### **Hypothesis 3: Partitioned Data**
+```
+Maybe you have multiple tables:
+├─ BonyStatement_2023 (500K rows)
+├─ BonyStatement_2024 (500K rows)
+├─ BonyStatement_2025 (50K rows) ← You're querying this one
+└─ Total: 1.5M, but you only query current year
+```
+
+### **Hypothesis 4: Cached Results**
+```
+First query was slow (you didn't notice)
+Now Access has results cached in memory
+Result: Subsequent queries instant
